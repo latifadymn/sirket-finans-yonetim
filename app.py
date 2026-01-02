@@ -1,123 +1,133 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="Holding Strateji Merkezi", layout="wide")
+# Sayfa Ayarları
+st.set_page_config(page_title="Holding Finans Paneli", layout="wide")
 
-# --- VERİ YAPISI GÜNCELLEME ---
+# --- VERİ İLKELENDİRME ---
 if 'data' not in st.session_state:
+    # Başlangıçta boş bir DataFrame oluşturuyoruz
     st.session_state.data = pd.DataFrame(columns=[
-        'Birim', 'Tür', 'Kategori', 'Miktar', 'Tarih', 'Durum', 'Tekrar'
+        'Birim', 'Tür', 'Kategori', 'Miktar', 'Tarih', 'Durum', 'Not'
     ])
 
-# --- FONKSİYONLAR ---
-def adds_months(sourcedate, months):
-    import calendar
-    month = sourcedate.month - 1 + months
-    year = sourcedate.year + month // 12
-    month = month % 12 + 1
-    day = min(sourcedate.day, calendar.monthrange(year, month)[1])
-    return datetime(year, month, day).date()
-
 # --- YAN MENÜ ---
-menu = st.sidebar.radio("Stratejik Yönetim", [
+st.sidebar.title("Holding Yönetimi")
+menu = st.sidebar.radio("Sayfa Seçin", [
     "📊 Genel Perspektif", 
     "🏢 Şirket Değerlemeleri",
-    "➕ İşlem ve Planlama", 
-    "⏳ Zaman & Kişisel Yatırım"
+    "➕ İşlem Ekle & Planla", 
+    "🎯 Yatırım Rehberi"
 ])
 
-# --- SAYFA 1: GENEL PERSPEKTİF (6 AYLIK) ---
+# Verileri Tarih Formatına Çevir (Hata önleyici)
+if not st.session_state.data.empty:
+    st.session_state.data['Tarih'] = pd.to_datetime(st.session_state.data['Tarih']).dt.date
+
+# --- SAYFA 1: GENEL PERSPEKTİF (6 AY) ---
 if menu == "📊 Genel Perspektif":
-    st.title("📈 6 Aylık Finansal Perspektif")
+    st.header("📈 6 Aylık Finansal Projeksiyon")
     df = st.session_state.data
     
-    if not df.empty:
-        df['Tarih'] = pd.to_datetime(df['Tarih']).dt.date
-        bugun = datetime.now().date()
-        alti_ay_sonra = adds_months(bugun, 6)
+    if df.empty:
+        st.info("Henüz veri yok. Lütfen işlem ekleyin.")
+    else:
+        # Gelecek 6 ayın sınırlarını belirle
+        bugun = date.today()
+        alt_ay_sonra = bugun + relativedelta(months=6)
         
-        # Gelecek Perspektifi Filtresi
-        mask = (df['Tarih'] >= bugun.replace(day=1)) & (df['Tarih'] <= alti_ay_sonra)
-        p_df = df[mask].copy()
-        p_df['Ay'] = pd.to_datetime(p_df['Tarih']).dt.strftime('%Y-%m')
+        # Grafik Verisi Hazırlama
+        df_viz = df.copy()
+        df_viz['Ay'] = pd.to_datetime(df_viz['Tarih']).dt.strftime('%Y-%m')
         
-        # Nakit Akış Grafiği
-        cash_flow = p_df.groupby(['Ay', 'Tür'])['Miktar'].sum().reset_index()
-        fig_line = px.line(cash_flow, x='Ay', y='Miktar', color='Tür', 
-                          title="Önümüzdeki 6 Ayın Tahmini Nakit Akışı", markers=True)
-        st.plotly_chart(fig_line, use_container_width=True)
+        # Aylık Özet Tablo
+        aylik_ozet = df_viz.groupby(['Ay', 'Tür'])['Miktar'].sum().reset_index()
         
-        # Ödeme Durumu Takibi
+        fig = px.line(aylik_ozet, x='Ay', y='Miktar', color='Tür', markers=True,
+                     title="Aylık Gelir ve Gider Trendi (Gelecek Odaklı)")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Ödeme Takip Listesi
         col1, col2 = st.columns(2)
         with col1:
-            st.subheader("Bekleyen Tahsilatlar (Gelir)")
-            st.dataframe(df[(df['Tür']=='Gelir') & (df['Durum']=='Beklemede')])
+            st.subheader("🔴 Bekleyen Ödemeler")
+            st.dataframe(df[(df['Tür']=='Gider') & (df['Durum']=='Beklemede')], use_container_width=True)
         with col2:
-            st.subheader("Ödenecek Masraflar (Gider)")
-            st.dataframe(df[(df['Tür']=='Gider') & (df['Durum']=='Beklemede')])
+            st.subheader("🟢 Bekleyen Tahsilatlar")
+            st.dataframe(df[(df['Tür']=='Gelir') & (df['Durum']=='Beklemede')], use_container_width=True)
 
 # --- SAYFA 2: ŞİRKET DEĞERLEMELERİ ---
 elif menu == "🏢 Şirket Değerlemeleri":
-    st.title("💎 Şirket Bazlı Kümülatif Değerleme")
+    st.header("💎 Şirket Bazlı Değerleme ve Tarihsel Durum")
     df = st.session_state.data
     sirketler = ["Godson Teknoloji", "Fynix Teknoloji", "Prifa Kahvecilik"]
     
     for sirket in sirketler:
-        s_df = df[df['Birim'] == sirket]
-        with st.expander(f"{sirket} - Detaylı Analiz", expanded=True):
-            c1, c2, c3, c4 = st.columns(4)
-            top_gelir = s_df[s_df['Tür']=='Gelir']['Miktar'].sum()
-            top_gider = s_df[s_df['Tür']=='Gider']['Miktar'].sum()
-            net_kar = top_gelir - top_gider
+        with st.expander(f"{sirket} Analizi", expanded=True):
+            s_df = df[df['Birim'] == sirket]
+            gelir = s_df[s_df['Tür']=='Gelir']['Miktar'].sum()
+            gider = s_df[s_df['Tür']=='Gider']['Miktar'].sum()
+            kar = gelir - gider
             
-            c1.metric("Toplam Ciro", f"{top_gelir:,.0f} TL")
-            c2.metric("Toplam Masraf", f"{top_gider:,.0f} TL")
-            c3.metric("Net Kâr/Zarar", f"{net_kar:,.0f} TL")
-            c4.metric("Tahmini Değerleme (x5 Kar)", f"{max(0, net_kar*5):,.0f} TL")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Toplam Gelir", f"{gelir:,.0f} TL")
+            c2.metric("Toplam Gider", f"{gider:,.0f} TL")
+            c3.metric("Net Kâr", f"{kar:,.0f} TL")
+            c4.metric("Değerleme (x5)", f"{max(0, kar*5):,.0f} TL", delta="Tahmini")
+            
+            # Şirkete Özel Gelir-Gider Şeması
+            if not s_df.empty:
+                fig_pie = px.pie(s_df, values='Miktar', names='Tür', hole=0.5, 
+                                 color_discrete_map={'Gelir':'#2ecc71', 'Gider':'#e74c3c'})
+                st.plotly_chart(fig_pie, use_container_width=True)
 
-# --- SAYFA 3: İŞLEM VE PLANLAMA (FONKSİYONEL GİRİŞ) ---
-elif menu == "➕ İşlem ve Planlama":
-    st.subheader("İşlem Kaydı ve Otomatik Planlama")
-    with st.form("gelismis_giris"):
+# --- SAYFA 3: İŞLEM EKLE & PLANLA ---
+elif menu == "➕ İşlem Ekle & Planla":
+    st.header("Yeni İşlem Girişi")
+    with st.form("islem_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             birim = st.selectbox("Birim", ["Godson Teknoloji", "Fynix Teknoloji", "Prifa Kahvecilik", "Kişisel/Yatırım"])
-            tur = st.radio("Tür", ["Gelir", "Gider"], horizontal=True)
-            miktar = st.number_input("Miktar", min_value=0.0)
-            tarih = st.date_input("Başlangıç Tarihi")
+            tur = st.radio("İşlem Türü", ["Gelir", "Gider"], horizontal=True)
+            miktar = st.number_input("Tutar (TL)", min_value=0.0, format="%.2f")
+            tarih = st.date_input("Başlangıç Tarihi", value=date.today())
         with col2:
+            kat = st.text_input("Kategori (Kira, Maaş, Satış vb.)")
             durum = st.selectbox("Durum", ["Gerçekleşti", "Beklemede"])
-            tekrar = st.selectbox("Tekrarlansın mı?", ["Hayır", "6 Ay Boyunca Tekrarla", "12 Ay Boyunca Tekrarla"])
-            kat = st.text_input("Kategori")
+            tekrar = st.selectbox("Periyot", ["Tek Seferlik", "6 Ay Tekrarla", "12 Ay Tekrarla"])
+            not_al = st.text_input("Not")
             
-        if st.form_submit_button("Sisteme Kaydet"):
+        if st.form_submit_button("Kaydet"):
             dongu = 1
             if "6 Ay" in tekrar: dongu = 6
             if "12 Ay" in tekrar: dongu = 12
             
-            new_rows = []
+            yeni_veriler = []
             for i in range(dongu):
-                new_date = adds_months(tarih, i)
-                new_rows.append({'Birim': birim, 'Tür': tur, 'Kategori': kat, 'Miktar': miktar, 'Tarih': new_date, 'Durum': durum, 'Tekrar': tekrar})
+                islem_tarihi = tarih + relativedelta(months=i)
+                yeni_veriler.append({
+                    'Birim': birim, 'Tür': tur, 'Kategori': kat, 
+                    'Miktar': miktar, 'Tarih': islem_tarihi, 
+                    'Durum': durum, 'Not': not_al
+                })
             
-            st.session_state.data = pd.concat([st.session_state.data, pd.DataFrame(new_rows)], ignore_index=True)
-            st.success(f"{dongu} adet işlem başarıyla planlandı!")
+            st.session_state.data = pd.concat([st.session_state.data, pd.DataFrame(yeni_veriler)], ignore_index=True)
+            st.success(f"{dongu} işlem başarıyla eklendi!")
 
-# --- SAYFA 4: ZAMAN & KİŞİSEL YATIRIM ---
-elif menu == "⏳ Zaman & Kişisel Yatırım":
-    st.title("🎯 Yatırım ve Efor Yönetimi")
-    df = st.session_state.data
+# --- SAYFA 4: YATIRIM REHBERİ ---
+elif menu == "🎯 Yatırım Rehberi":
+    st.header("Kişisel Yatırım ve Sermaye Planlama")
+    gelir_giris = st.number_input("Aylık Kişisel Gelirinizi Girin (TL)", min_value=0.0)
     
-    kisisel_gelir = st.number_input("Aylık Kişisel Gelirin (TL)", min_value=0.0)
-    y_orani = 0.10
-    y_butcesi = kisisel_gelir * y_orani
-    
-    st.metric("Aylık Yatırım Bütçen (%10)", f"{y_butcesi:,.0f} TL")
-    st.info(f"Bu bütçeyi Godson (%40), Fynix (%40) ve Prifa (%20) arasında bölüştürmen sermaye büyümesi için önerilir.")
-    
-    # Zaman Dağıtımı (Önceki mantıkla aynı)
-    st.write("---")
-    st.subheader("Zaman Bazlı Gider Yansıtma")
-    # ... (Zaman slider'ları ve dağıtım butonu buraya eklenebilir)
+    if gelir_giris > 0:
+        y_butcesi = gelir_giris * 0.10
+        st.metric("Aylık Yatırım Bütçeniz (%10)", f"{y_butcesi:,.0f} TL")
+        
+        st.write("### Stratejik Yatırım Önerisi")
+        col1, col2, col3 = st.columns(3)
+        col1.info(f"**Godson (%40)**\n\n {y_butcesi*0.4:,.0f} TL\n(Teknoloji Geliştirme)")
+        col2.info(f"**Fynix (%40)**\n\n {y_butcesi*0.4:,.0f} TL\n(Operasyonel Büyüme)")
+        col3.info(f"**Prifa (%20)**\n\n {y_butcesi*0.2:,.0f} TL\n(Stok ve Fiziksel Alan)")
